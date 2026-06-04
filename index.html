@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#05060e">
+<title>Resonator · Dodecahedron of Mirrors</title>
+<style>
+:root{
+  --cyan:#38e1d6; --mag:#ff5ec4; --gold:#ffe6a3; --ink:#dfe7ff; --muted:#7e89b8;
+  --panel:rgba(16,18,40,.72); --line:rgba(120,200,255,.16);
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;overflow:hidden;background:#05060e;color:var(--ink);
+  font-family:"Spectral","Georgia",serif}
+#sky{position:fixed;inset:0;z-index:0}
+#gl{position:fixed;inset:0;z-index:1;touch-action:none}
+
+.hud{position:fixed;z-index:3;pointer-events:none}
+#top{top:0;left:0;right:0;text-align:center;padding:16px 14px 6px}
+.title{font-family:"Cormorant Garamond","Fraunces",serif;letter-spacing:.4em;text-transform:uppercase;
+  font-size:1.15rem;color:var(--cyan);text-shadow:0 0 26px rgba(56,225,214,.4);margin:0 0 0 .4em}
+.sub{font-style:italic;color:var(--muted);font-size:.86rem;margin-top:4px}
+
+#status{margin-top:10px;font-family:"Space Mono",ui-monospace,monospace;font-size:.82rem;letter-spacing:.06em;color:var(--ink)}
+#status b{color:var(--gold)}
+#solvedMsg{display:none;margin-top:8px;font-family:"Cormorant Garamond",serif;letter-spacing:.4em;
+  text-transform:uppercase;color:var(--gold);font-size:1.05rem;text-shadow:0 0 28px rgba(255,230,163,.6);
+  animation:bloom 1.2s ease both}
+@keyframes bloom{from{opacity:0;letter-spacing:.1em}to{opacity:1;letter-spacing:.4em}}
+
+#controls{bottom:0;left:0;right:0;display:flex;gap:8px;justify-content:center;flex-wrap:wrap;
+  padding:14px;pointer-events:none}
+.btn{pointer-events:auto;cursor:pointer;font-family:"Space Mono",monospace;font-size:.72rem;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--ink);background:var(--panel);border:1px solid var(--line);
+  border-radius:999px;padding:11px 18px;backdrop-filter:blur(8px);transition:.2s}
+.btn:hover{border-color:var(--cyan);color:var(--cyan)}
+.btn:active{transform:scale(.96)}
+.btn.primary{color:#06121a;background:linear-gradient(180deg,#7ff0e6,var(--cyan));border-color:transparent;font-weight:700}
+
+#sel{position:fixed;z-index:3;left:50%;bottom:74px;transform:translateX(-50%);pointer-events:none;
+  font-family:"Space Mono",monospace;font-size:.74rem;color:var(--muted);text-align:center;opacity:0;transition:.3s}
+#sel.show{opacity:1}
+#sel b{color:var(--mag)}
+
+#help{position:fixed;z-index:3;top:50%;left:50%;transform:translate(-50%,-50%);max-width:440px;
+  background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:26px 26px 20px;
+  backdrop-filter:blur(10px);text-align:center;line-height:1.6}
+#help h2{font-family:"Cormorant Garamond",serif;letter-spacing:.3em;text-transform:uppercase;color:var(--cyan);
+  margin:.2em 0 .6em;font-weight:500;font-size:1.1rem}
+#help p{margin:.5em 0;color:var(--ink);font-size:.96rem}
+#help .small{color:var(--muted);font-size:.84rem;font-style:italic}
+#help .btn{margin-top:14px;display:inline-block}
+.k{color:var(--gold);font-family:"Space Mono",monospace}
+</style>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500&family=Spectral:wght@300;400&family=Space+Mono&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+<canvas id="sky"></canvas>
+<canvas id="gl"></canvas>
+
+<div id="top" class="hud">
+  <h1 class="title">Resonator</h1>
+  <div class="sub">A dodecahedron of mirrors · seal the shell, return the light</div>
+  <div id="status">Sealed <b id="cnt">0</b> / 12 mirrors</div>
+  <div id="solvedMsg">✦ Resonance ✦</div>
+</div>
+
+<div id="sel"></div>
+
+<div id="controls" class="hud">
+  <button class="btn" id="scrambleBtn">Scramble</button>
+  <button class="btn" id="solveBtn">Auto-align</button>
+  <button class="btn" id="viewBtn">Reset view</button>
+</div>
+
+<div id="help">
+  <h2>The Mirrored Core</h2>
+  <p>Twelve mirror panels should lock together into a sealed dodecahedron — every edge touching its neighbor — so the light reflects cleanly back to the glowing core.</p>
+  <p>The mirrors have tumbled loose. <span class="k">Tap a panel and drag</span> to turn it in any direction until its edges snap to its neighbors and it glows cyan.</p>
+  <p class="small">Drag empty space to orbit · scroll / pinch to zoom · arrow keys nudge the selected panel.</p>
+  <button class="btn primary" id="startBtn">Begin</button>
+</div>
+
+<script>
+const TAU=Math.PI*2, DEG=Math.PI/180;
+
+/* ---------- starfield backdrop ---------- */
+(function(){const c=document.getElementById('sky'),x=c.getContext('2d');let st=[];
+ function rs(){c.width=innerWidth;c.height=innerHeight;st=[];const n=Math.min(180,innerWidth*innerHeight/8000|0);
+   for(let i=0;i<n;i++)st.push({x:Math.random()*c.width,y:Math.random()*c.height,r:Math.random()*1.2+.2,p:Math.random()*TAU,s:Math.random()*.02+.004});}
+ function loop(){x.clearRect(0,0,c.width,c.height);for(const s of st){s.p+=s.s;const a=.3+Math.sin(s.p)*.3;
+   x.beginPath();x.arc(s.x,s.y,s.r,0,TAU);x.fillStyle='rgba(180,210,255,'+a+')';x.fill();}requestAnimationFrame(loop);}
+ addEventListener('resize',rs);rs();loop();})();
+
+/* ---------- three.js setup ---------- */
+const renderer=new THREE.WebGLRenderer({canvas:document.getElementById('gl'),antialias:true,alpha:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+const scene=new THREE.Scene();
+const camera=new THREE.PerspectiveCamera(48,1,0.1,100);
+function resize(){const w=innerWidth,h=innerHeight;renderer.setSize(w,h);camera.aspect=w/h;camera.updateProjectionMatrix();}
+addEventListener('resize',resize);resize();
+
+scene.add(new THREE.AmbientLight(0x404a7a,1.0));
+const coreLight=new THREE.PointLight(0xfff0c0,2.2,40);scene.add(coreLight);
+
+/* ---------- exact regular dodecahedron from the reference STL (12 congruent pentagons) ---------- */
+const upZ=new THREE.Vector3(0,0,1);
+const STL_SCALE=2.85;
+const DODEC={vertices:[[0.500000,-1.309017,0.000000],[0.809017,-0.809017,0.809017],[-0.500000,-1.309017,0.000000],[0.000000,-0.500000,1.309017],[-0.809017,-0.809017,0.809017],[-0.809017,-0.809017,-0.809017],[0.000000,-0.500000,-1.309017],[0.809017,-0.809017,-0.809017],[1.309017,0.000000,-0.500000],[1.309017,0.000000,0.500000],[0.000000,0.500000,-1.309017],[0.809017,0.809017,-0.809017],[0.000000,0.500000,1.309017],[0.809017,0.809017,0.809017],[-0.500000,1.309017,0.000000],[0.500000,1.309017,0.000000],[-0.809017,0.809017,-0.809017],[-1.309017,0.000000,-0.500000],[-1.309017,0.000000,0.500000],[-0.809017,0.809017,0.809017]],
+faces:[[4,2,0,1,3],[6,7,0,2,5],[9,1,0,7,8],[8,7,6,10,11],[12,3,1,9,13],[15,11,10,16,14],[18,19,14,16,17],[10,6,5,17,16],[17,5,2,4,18],[13,9,8,11,15],[14,19,12,13,15],[18,4,3,12,19]]};
+const faces=(function(){
+  const vs=DODEC.vertices.map(v=>new THREE.Vector3(v[0],v[1],v[2]).multiplyScalar(STL_SCALE));
+  return DODEC.faces.map(idx=>{
+    const corners=idx.map(i=>vs[i].clone());
+    const center=corners.reduce((s,v)=>s.add(v),new THREE.Vector3()).multiplyScalar(1/corners.length);
+    return {normal:center.clone().normalize(),center,corners};
+  });
+})();
+// orient so faces[0] faces the default camera (+Z) with a vertex up — the ideal silhouette
+(function(){
+  const f0=faces[0];
+  const q1=new THREE.Quaternion().setFromUnitVectors(f0.normal,upZ);
+  const cornerP=f0.corners[0].clone().sub(f0.center).applyQuaternion(q1);
+  const ang=Math.atan2(cornerP.y,cornerP.x);
+  const q2=new THREE.Quaternion().setFromAxisAngle(upZ,Math.PI/2-ang);
+  const Q=q2.multiply(q1);
+  faces.forEach(f=>{f.corners.forEach(v=>v.applyQuaternion(Q));f.center.applyQuaternion(Q);f.normal.applyQuaternion(Q);});
+})();
+const inradius=faces[0].center.length();
+
+/* spin steps for the pentagon's 5-fold symmetry (all visually identical fits) */
+const SPIN5=[]; for(let k=0;k<5;k++)SPIN5.push(new THREE.Quaternion().setFromAxisAngle(upZ,k*72*DEG));
+
+/* build one panel from its TRUE face vertices so edges meet neighbors exactly */
+function buildFace(i){
+  const f=faces[i];
+  const faceCenter=f.center.clone();
+  const baseQuat=new THREE.Quaternion().setFromUnitVectors(upZ,f.normal);
+  const inv=baseQuat.clone().conjugate();
+  const ordered=f.corners.map(v=>v.clone().sub(faceCenter).applyQuaternion(inv)); // -> local plane, z~0
+  ordered.sort((a,b)=>Math.atan2(a.y,a.x)-Math.atan2(b.y,b.x));
+  const R=ordered.reduce((s,v)=>s+Math.hypot(v.x,v.y),0)/5;
+  // filled pentagon (fan from centroid)
+  const pos=[0,0,0];const idx=[];
+  ordered.forEach(v=>pos.push(v.x,v.y,0));
+  for(let k=1;k<=5;k++)idx.push(0,k,k%5+1);
+  const pentGeo=new THREE.BufferGeometry();
+  pentGeo.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));
+  pentGeo.setIndex(idx);pentGeo.computeVertexNormals();
+  // outline loop
+  const linePts=ordered.map(v=>new THREE.Vector3(v.x,v.y,0.004));linePts.push(linePts[0].clone());
+  const outGeo=new THREE.BufferGeometry().setFromPoints(linePts);
+  return {pentGeo,outGeo,baseQuat,faceCenter,R};
+}
+
+const panels=[];
+for(let i=0;i<12;i++){
+  const f=buildFace(i);
+  const group=new THREE.Group();
+  group.position.copy(f.faceCenter);
+  group.quaternion.copy(f.baseQuat);
+
+  const mat=new THREE.MeshStandardMaterial({color:0x0a1030,metalness:0.85,roughness:0.22,
+    transparent:true,opacity:0.26,side:THREE.DoubleSide,emissive:0x0a2030,emissiveIntensity:0.4});
+  const mesh=new THREE.Mesh(f.pentGeo,mat);
+  mesh.userData.panelIndex=i; group.add(mesh);
+
+  const outMat=new THREE.LineBasicMaterial({color:0x38e1d6,transparent:true,opacity:0.95});
+  const outline=new THREE.LineLoop(f.outGeo,outMat); group.add(outline);
+
+  const aimGeo=new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,0,0),new THREE.Vector3(0,0,-f.R*0.8)]);
+  const aimMat=new THREE.LineBasicMaterial({color:0xff5ec4,transparent:true,opacity:0.0});
+  const aim=new THREE.Line(aimGeo,aimMat); group.add(aim);
+  scene.add(group);
+
+  const beamGeo=new THREE.BufferGeometry();
+  beamGeo.setAttribute('position',new THREE.Float32BufferAttribute(new Float32Array(9),3));
+  const beamMat=new THREE.LineBasicMaterial({color:0x38e1d6,transparent:true,opacity:0.5});
+  const beam=new THREE.Line(beamGeo,beamMat); scene.add(beam);
+
+  const glint=new THREE.Mesh(new THREE.SphereGeometry(0.07,10,10),new THREE.MeshBasicMaterial({color:0xfff2cc}));
+  scene.add(glint);
+
+  // q = current orientation (free); correct orientations = baseQuat * spin(72k)
+  const correct=SPIN5.map(s=>f.baseQuat.clone().multiply(s));
+  panels.push({group,mesh,outMat,aim,faceCenter:f.faceCenter,baseQuat:f.baseQuat,correct,R:f.R,
+    q:f.baseQuat.clone(), tq:f.baseQuat.clone(), errDeg:0, wasSealed:false, flash:0, beam,beamGeo,beamMat,glint,glintT:Math.random()*2});
+}
+
+/* ---------- glowing core ---------- */
+const core=new THREE.Mesh(new THREE.IcosahedronGeometry(0.34,1),
+  new THREE.MeshStandardMaterial({color:0xfff2cc,emissive:0xffe6a3,emissiveIntensity:2.0,roughness:0.3}));
+scene.add(core);
+const halo=new THREE.Mesh(new THREE.SphereGeometry(0.6,24,24),
+  new THREE.MeshBasicMaterial({color:0xffe6a3,transparent:true,opacity:0.12}));
+scene.add(halo);
+
+/* ---------- helpers ---------- */
+const tmpN=new THREE.Vector3();
+function colorForError(deg){const t=Math.min(deg/14,1);return new THREE.Color().setHSL((160*(1-t))/360,0.85,0.55);}
+function quatAngle(a,b){let d=Math.abs(a.x*b.x+a.y*b.y+a.z*b.z+a.w*b.w);d=Math.min(1,d);return 2*Math.acos(d);}
+function nearestCorrect(p){let best=p.correct[0],bd=1e9;for(const c of p.correct){const a=quatAngle(p.q,c);if(a<bd){bd=a;best=c;}}return {q:best,err:bd};}
+
+function updatePanel(p,i){
+  const nc=nearestCorrect(p);
+  // magnetic pull: when close (and not being dragged), ease into the slot — snaps on release
+  if(!autoAlign && activeDrag!==i && nc.err<MAGNET){
+    const s=0.045+0.22*(1-nc.err/MAGNET);
+    p.q.slerp(nc.q,s); p.tq.copy(p.q);
+  }
+  p.q.normalize(); p.group.quaternion.copy(p.q);
+  p.errDeg=quatAngle(p.q,nc.q)/DEG;
+
+  const n=tmpN.copy(upZ).applyQuaternion(p.q);        // current world normal
+  const P=p.faceCenter, d=P.clone().normalize();      // core -> face
+  const r=d.clone().sub(n.clone().multiplyScalar(2*d.dot(n))).normalize();
+  const end=P.clone().add(r.multiplyScalar(P.length()));
+
+  const a=p.beamGeo.attributes.position.array;
+  a[0]=0;a[1]=0;a[2]=0; a[3]=P.x;a[4]=P.y;a[5]=P.z; a[6]=end.x;a[7]=end.y;a[8]=end.z;
+  p.beamGeo.attributes.position.needsUpdate=true;
+
+  const lit=p.errDeg<4;
+  if(lit&&!p.wasSealed)p.flash=1;            // just snapped home
+  p.wasSealed=lit;
+  p.flash=Math.max(0,p.flash-0.05);
+
+  let col=colorForError(p.errDeg);
+  if(p.flash>0)col=col.clone().lerp(new THREE.Color(0xffffff),p.flash*0.85);
+  p.beamMat.color.copy(col); p.outMat.color.copy(col);
+  p.outMat.opacity=0.6+(lit?0.35:0)+p.flash*0.6;
+  p.beamMat.opacity=allSealed?0.55:(lit?0.9:0.4);
+  p.mesh.material.emissive.copy(col); p.mesh.material.emissiveIntensity=(lit?1.0:0.3)+p.flash*2.8;
+  const tOp=lit?(allSealed?0.5:0.42):0.18;
+  p.mesh.material.opacity+=(tOp-p.mesh.material.opacity)*0.16;
+  p.group.scale.setScalar(1+p.flash*0.14);
+
+  p.glintT+=0.012; if(p.glintT>2){p.glintT-=2; if(lit)coreFlash=Math.min(1.6,coreFlash+0.55);} const t=p.glintT;
+  if(t<1){p.glint.position.lerpVectors(new THREE.Vector3(0,0,0),P,t);p.glint.visible=true;}
+  else if(lit){p.glint.position.lerpVectors(P,end,t-1);p.glint.visible=true;}
+  else p.glint.visible=false;
+
+  return p.errDeg;
+}
+
+/* ---------- selection ---------- */
+const MAGNET=11*DEG;   // panels within this angle of true snap into place on release
+let selected=-1, activeDrag=-1;
+function select(i){
+  selected=i;
+  panels.forEach((p,k)=>p.aim.material.opacity=(k===i)?0.85:0.0);
+  const sel=document.getElementById('sel');
+  if(i>=0){sel.classList.add('show');updateSelLabel();}else sel.classList.remove('show');
+}
+function updateSelLabel(){if(selected<0)return;document.getElementById('sel').innerHTML=`Mirror <b>${selected+1}</b> · off by ${panels[selected].errDeg.toFixed(1)}°`;}
+
+/* ---------- orbit camera + interaction ---------- */
+const FACE_THETA=Math.PI/2, FACE_PHI=Math.PI/2;
+let camR=8.5,camTheta=FACE_THETA,camPhi=FACE_PHI,camTR=8.5,camTTheta=FACE_THETA,camTPhi=FACE_PHI;
+function applyCam(){
+  camR+=(camTR-camR)*0.12;camTheta+=(camTTheta-camTheta)*0.15;camPhi+=(camTPhi-camPhi)*0.15;
+  camPhi=Math.max(0.15,Math.min(Math.PI-0.15,camPhi));
+  camera.position.set(camR*Math.sin(camPhi)*Math.cos(camTheta),camR*Math.cos(camPhi),camR*Math.sin(camPhi)*Math.sin(camTheta));
+  camera.lookAt(0,0,0);
+}
+const ray=new THREE.Raycaster(),ndc=new THREE.Vector2();
+const pointers=new Map();let mode=null,last={x:0,y:0},pinchStart=0,camRPinch=0;
+function pick(x,y){ndc.x=(x/innerWidth)*2-1;ndc.y=-(y/innerHeight)*2+1;ray.setFromCamera(ndc,camera);
+  const h=ray.intersectObjects(panels.map(p=>p.mesh));return h.length?h[0].object.userData.panelIndex:-1;}
+const gl=document.getElementById('gl');
+gl.addEventListener('pointerdown',e=>{
+  gl.setPointerCapture(e.pointerId);pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
+  if(pointers.size===2){const p=[...pointers.values()];pinchStart=Math.hypot(p[0].x-p[1].x,p[0].y-p[1].y);camRPinch=camTR;mode='pinch';return;}
+  last={x:e.clientX,y:e.clientY};const hit=pick(e.clientX,e.clientY);
+  if(hit>=0){mode='adjust';select(hit);}else mode='orbit';
+});
+gl.addEventListener('pointermove',e=>{
+  if(!pointers.has(e.pointerId))return;pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
+  if(mode==='pinch'&&pointers.size>=2){const p=[...pointers.values()];const dd=Math.hypot(p[0].x-p[1].x,p[0].y-p[1].y);camTR=Math.max(4.5,Math.min(16,camRPinch*(pinchStart/dd)));return;}
+  const dx=e.clientX-last.x,dy=e.clientY-last.y;last={x:e.clientX,y:e.clientY};
+  if(mode==='orbit'){camTTheta+=dx*0.006;camTPhi-=dy*0.006;}
+  else if(mode==='adjust'&&selected>=0){tumble(panels[selected],dx,dy);updateSelLabel();}
+});
+function endPtr(e){pointers.delete(e.pointerId);if(pointers.size===0)mode=null;if(pointers.size===1)mode='orbit';}
+gl.addEventListener('pointerup',endPtr);gl.addEventListener('pointercancel',endPtr);
+gl.addEventListener('wheel',e=>{e.preventDefault();camTR=Math.max(4.5,Math.min(16,camTR+e.deltaY*0.004));},{passive:false});
+
+/* trackball tumble of a panel in any direction, relative to the camera view */
+const cUp=new THREE.Vector3(),cRight=new THREE.Vector3(),qH=new THREE.Quaternion(),qV=new THREE.Quaternion();
+function tumble(p,dx,dy){
+  cUp.set(0,1,0).applyQuaternion(camera.quaternion);
+  cRight.set(1,0,0).applyQuaternion(camera.quaternion);
+  qH.setFromAxisAngle(cUp,dx*0.011); qV.setFromAxisAngle(cRight,dy*0.011);
+  p.q.premultiply(qV).premultiply(qH).normalize(); p.tq.copy(p.q);
+}
+addEventListener('keydown',e=>{
+  if(selected<0)return;const p=panels[selected];const s=2;
+  if(e.key==='ArrowUp')tumble(p,0,-s);else if(e.key==='ArrowDown')tumble(p,0,s);
+  else if(e.key==='ArrowLeft')tumble(p,-s,0);else if(e.key==='ArrowRight')tumble(p,s,0);else return;
+  updateSelLabel();e.preventDefault();
+});
+
+/* ---------- buttons ---------- */
+let autoAlign=false;
+function randTumble(){const ax=new THREE.Vector3(Math.random()*2-1,Math.random()*2-1,Math.random()*2-1).normalize();
+  return new THREE.Quaternion().setFromAxisAngle(ax,(28+Math.random()*42)*DEG);}
+function scramble(){panels.forEach(p=>{p.q.copy(p.baseQuat).premultiply(randTumble()).normalize();p.tq.copy(p.q);});
+  solved=false;autoAlign=false;document.getElementById('solvedMsg').style.display='none';}
+document.getElementById('scrambleBtn').onclick=scramble;
+document.getElementById('solveBtn').onclick=()=>{panels.forEach(p=>p.tq.copy(nearestCorrect(p).q));autoAlign=true;};
+document.getElementById('viewBtn').onclick=()=>{camTR=8.5;camTTheta=FACE_THETA;camTPhi=FACE_PHI;select(-1);};
+document.getElementById('startBtn').onclick=()=>{document.getElementById('help').style.display='none';scramble();};
+
+/* ---------- main loop ---------- */
+let solved=false, allSealed=false, coreFlash=0;
+function loop(now){
+  if(autoAlign){let done=true;panels.forEach(p=>{p.q.slerp(p.tq,0.14);if(quatAngle(p.q,p.tq)>0.01)done=false;});if(done)autoAlign=false;}
+  activeDrag=(mode==='adjust')?selected:-1;
+  let sealed=0;panels.forEach((p,i)=>{if(updatePanel(p,i)<4)sealed++;});
+  allSealed=(sealed===12);
+  document.getElementById('cnt').textContent=sealed;
+
+  const frac=sealed/12, pulse=1+Math.sin(now*0.004)*0.06*(0.4+frac);
+  coreFlash*=0.88;
+  core.scale.setScalar(pulse*(0.8+frac*0.6)*(1+coreFlash*0.2));
+  core.material.emissiveIntensity=1.4+frac*2.4+coreFlash*2.6; coreLight.intensity=1.6+frac*3+coreFlash*3;
+  halo.scale.setScalar(pulse*(1+frac*1.2)*(1+coreFlash*0.28)); halo.material.opacity=0.08+frac*0.24+coreFlash*0.16;
+
+  if(sealed===12&&!solved){solved=true;document.getElementById('solvedMsg').style.display='block';panels.forEach(p=>p.flash=Math.max(p.flash,0.9));}
+  if(sealed<12&&solved){solved=false;document.getElementById('solvedMsg').style.display='none';}
+  if(selected>=0)updateSelLabel();
+  if(pointers.size===0){
+    if(solved){ camTTheta+=(FACE_THETA-camTTheta)*0.03; camTPhi+=(FACE_PHI-camTPhi)*0.03; }
+    else camTTheta+=0.0012;
+  }
+
+  applyCam();renderer.render(scene,camera);requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
